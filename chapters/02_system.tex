@@ -1,0 +1,132 @@
+%==============================================================================
+\section{Act II: The Brain (\texttt{System.h/.cc})}
+%==============================================================================
+
+The \texttt{System} class is the \textbf{orchestrator}. It doesn't do any computation itself, but it creates and coordinates all the components.
+
+\subsection{What Does the System Own?}
+
+Looking at \texttt{System.h}, we see the System holds pointers to everything:
+
+\begin{lstlisting}[caption={System's private members (simplified)}]
+private:
+    eSensor mSensor;              // MONOCULAR, STEREO, RGBD, etc.
+    
+    // The knowledge base
+    ORBVocabulary* mpVocabulary;  // Visual vocabulary for recognition
+    KeyFrameDatabase* mpKeyFrameDatabase;  // For loop detection
+    Atlas* mpAtlas;               // Collection of all maps
+    
+    // The workers
+    Tracking* mpTracker;          // Estimates camera pose
+    LocalMapping* mpLocalMapper;  // Builds the map
+    LoopClosing* mpLoopCloser;    // Fixes drift
+    
+    // Visualization
+    Viewer* mpViewer;
+    FrameDrawer* mpFrameDrawer;
+    MapDrawer* mpMapDrawer;
+    
+    // Threads
+    std::thread* mptLocalMapping;
+    std::thread* mptLoopClosing;
+    std::thread* mptViewer;
+\end{lstlisting}
+
+\subsection{The System Constructor: Birth of SLAM}
+
+When you call \texttt{System(vocabPath, settingsPath, MONOCULAR, true)}, this happens:
+
+\begin{enumerate}
+    \item \textbf{Load Vocabulary}: Read the ORB dictionary from disk (~100MB, takes a few seconds)
+    \item \textbf{Create Atlas}: The ``library'' that will store all maps and map points
+    \item \textbf{Create KeyFrameDatabase}: For finding similar places (loop closure)
+    \item \textbf{Create Drawers}: For visualization
+    \item \textbf{Create Tracking}: The main worker (we'll explore this in the next section)
+    \item \textbf{Create LocalMapping}: Spawn a background thread
+    \item \textbf{Create LoopClosing}: Spawn another background thread
+    \item \textbf{Create Viewer}: Spawn the visualization thread
+\end{enumerate}
+
+\subsection{The Sensor Types}
+
+The System supports multiple sensor configurations:
+
+\begin{lstlisting}[caption={Sensor types enum}]
+enum eSensor {
+    MONOCULAR = 0,     // Single camera
+    STEREO = 1,        // Two cameras (left/right)
+    RGBD = 2,          // RGB + Depth camera (Kinect, RealSense)
+    IMU_MONOCULAR = 3, // Mono + IMU
+    IMU_STEREO = 4,    // Stereo + IMU
+    IMU_RGBD = 5       // RGBD + IMU
+};
+\end{lstlisting}
+
+\subsection{The Public Interface}
+
+The System exposes a simple interface to the outside world:
+
+\begin{lstlisting}[caption={System's main interface}]
+// Feed images to the system (returns camera pose)
+Sophus::SE3f TrackMonocular(const cv::Mat &im, const double &timestamp);
+Sophus::SE3f TrackStereo(const cv::Mat &imLeft, const cv::Mat &imRight, ...);
+Sophus::SE3f TrackRGBD(const cv::Mat &im, const cv::Mat &depthmap, ...);
+
+// Control
+void ActivateLocalizationMode();  // Stop mapping, only track
+void DeactivateLocalizationMode();
+void Reset();
+void Shutdown();
+
+// Output
+void SaveTrajectoryTUM(const string &filename);
+void SaveTrajectoryEuRoC(const string &filename);
+\end{lstlisting}
+
+\textbf{Key insight:} The System class follows the \textit{Facade} design pattern. It hides all the complexity behind a simple interface. You don't need to know about Frames, KeyFrames, or MapPoints to use it.
+
+\subsection{What Happens in \texttt{TrackMonocular}?}
+
+When you call \texttt{SLAM.TrackMonocular(im, timestamp)}:
+
+\begin{lstlisting}[caption={TrackMonocular simplified flow}]
+Sophus::SE3f System::TrackMonocular(const cv::Mat &im, const double &timestamp)
+{
+    // 1. Convert to grayscale if needed
+    cv::Mat imGray;
+    if(im.channels() == 3)
+        cv::cvtColor(im, imGray, cv::COLOR_BGR2GRAY);
+    else
+        imGray = im;
+    
+    // 2. Delegate to Tracking (the real worker!)
+    Sophus::SE3f Tcw = mpTracker->GrabImageMonocular(imGray, timestamp, "");
+    
+    // 3. Update state for external queries
+    mTrackingState = mpTracker->mState;
+    mTrackedMapPoints = mpTracker->mCurrentFrame.mvpMapPoints;
+    
+    return Tcw;  // Return the camera pose
+}
+\end{lstlisting}
+
+So the System is essentially a thin wrapper. The real work happens in \texttt{Tracking}.
+
+\subsection{The Multi-Threading Model}
+
+ORB-SLAM3 uses a producer-consumer pattern:
+
+\begin{itemize}
+    \item \textbf{Tracking (Main Thread)}: Produces KeyFrames, consumes images
+    \item \textbf{LocalMapping (Thread 1)}: Consumes KeyFrames, produces MapPoints
+    \item \textbf{LoopClosing (Thread 2)}: Consumes KeyFrames, produces corrections
+    \item \textbf{Viewer (Thread 3)}: Consumes map state, produces visualization
+\end{itemize}
+
+Communication happens through:
+\begin{itemize}
+    \item Shared pointers to KeyFrames and MapPoints
+    \item Thread-safe queues
+    \item Mutex-protected data access
+\end{itemize}

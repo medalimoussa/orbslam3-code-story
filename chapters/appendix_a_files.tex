@@ -1,0 +1,81 @@
+%==============================================================================
+\section{Appendix A: File Organization}
+%==============================================================================
+
+\subsection{Project Structure}
+
+\begin{verbatim}
+ORB_SLAM3/
+|
++-- Examples/                    <-- Entry points
+|   +-- Monocular/
+|   |   +-- mono_euroc.cc        <-- Main for EuRoC dataset
+|   |   +-- mono_tum.cc          <-- Main for TUM dataset
+|   +-- Stereo/
+|   +-- RGB-D/
+|
++-- include/                     <-- Header files
+|   +-- System.h                 <-- The orchestrator
+|   +-- Tracking.h               <-- Pose estimation
+|   +-- LocalMapping.h           <-- Map building
+|   +-- LoopClosing.h            <-- Drift correction
+|   +-- Frame.h                  <-- Single image
+|   +-- KeyFrame.h               <-- Important image
+|   +-- MapPoint.h               <-- 3D point
+|   +-- Map.h                    <-- Holds KFs and MPs
+|   +-- Atlas.h                  <-- Multi-map management
+|   +-- ORBextractor.h           <-- Feature extraction
+|   +-- ORBmatcher.h             <-- Feature matching
+|   +-- Optimizer.h              <-- g2o wrapper
+|   +-- GeometricCamera.h        <-- Camera models
+|
++-- src/                         <-- Implementation files
+|   +-- (mirrors include/)
+|
++-- Thirdparty/                  <-- External libraries
+|   +-- DBoW2/                   <-- Bag-of-Words
+|   +-- g2o/                     <-- Graph optimization
+|   +-- Sophus/                  <-- Lie groups (SE3)
+|
++-- Vocabulary/
+|   +-- ORBvoc.txt               <-- Visual vocabulary (~100MB)
+|
++-- docs/
+    +-- Understanding_code/      <-- This document!
+\end{verbatim}
+
+\subsection{Your Custom Files}
+
+\begin{verbatim}
+ORB_SLAM3_perso_Branch_ORB_LOOP/
+|
++-- include/
+|   +-- ONNXFeatureExtractor.h   <-- XFeat extraction
+|   +-- LightGlueMatcher.h       <-- LightGlue matching
+|   +-- ONNXDepthEstimator.h     <-- Depth estimation
+|   +-- SemiDenseTracker.h       <-- Semi-dense tracking
+|
++-- src/
+    +-- ONNXFeatureExtractor.cc
+    +-- LightGlueMatcher.cc
+    +-- ...
+\end{verbatim}
+
+\subsection{Key Configuration Files}
+
+\begin{verbatim}
+Examples/Monocular/
++-- EuRoC.yaml                   <-- Standard EuRoC config
++-- TUM_mono.yaml                <-- TUM config
++-- TUM_PureXFeat.yaml           <-- Your XFeat config
+\end{verbatim}
+
+\subsection{Build Artifacts}
+
+\begin{verbatim}
+build/                           <-- CMake build directory
++-- lib/
+|   +-- libORB_SLAM3.so          <-- Shared library
++-- Examples/Monocular/
+    +-- mono_euroc               <-- Executable
+\end{verbatim}

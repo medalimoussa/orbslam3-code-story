@@ -1,0 +1,178 @@
+%==============================================================================
+\section{Act VI: The Proofreader (\texttt{LoopClosing})}
+%==============================================================================
+
+As the camera moves, small errors accumulate (drift). \texttt{LoopClosing} detects when the camera returns to a previously visited place and corrects the drift.
+
+\subsection{Why Loop Closure Matters}
+
+Imagine walking around a building and returning to your starting point:
+\begin{itemize}
+    \item Without loop closure: The map shows you're 10 meters away from the start
+    \item With loop closure: The system recognizes you're back at start and fixes the error
+\end{itemize}
+
+\subsection{The Loop Closing Pipeline}
+
+\begin{lstlisting}[caption={LoopClosing::Run() simplified}]
+void LoopClosing::Run()
+{
+    while(!mbFinishRequested)
+    {
+        if(CheckNewKeyFrames())
+        {
+            // 1. Detect loop candidates using Bag-of-Words
+            if(DetectLoop())
+            {
+                // 2. Compute similarity transformation (with scale)
+                if(ComputeSim3())
+                {
+                    // 3. Correct the loop
+                    CorrectLoop();
+                    
+                    // 4. Global Bundle Adjustment (in a new thread)
+                    RunGlobalBundleAdjustment();
+                }
+            }
+        }
+    }
+}
+\end{lstlisting}
+
+\subsection{Step 1: Loop Detection}
+
+We use Bag-of-Words to find similar KeyFrames:
+
+\begin{lstlisting}[caption={DetectLoop concept}]
+bool LoopClosing::DetectLoop()
+{
+    // 1. Compute minimum score threshold
+    //    (use similarity with neighbors as baseline)
+    float minScore = ComputeMinScoreInNeighbors();
+    
+    // 2. Query database for similar KeyFrames
+    vector<KeyFrame*> vpCandidates = 
+        mpKeyFrameDB->DetectLoopCandidates(mpCurrentKF, minScore);
+    
+    if(vpCandidates.empty())
+        return false;
+    
+    // 3. Check temporal consistency
+    //    (candidates should appear in multiple consecutive KFs)
+    for(KeyFrame* pKF : vpCandidates)
+    {
+        if(CheckConsistency(pKF))
+            mvpEnoughConsistentCandidates.push_back(pKF);
+    }
+    
+    return !mvpEnoughConsistentCandidates.empty();
+}
+\end{lstlisting}
+
+\subsection{Step 2: Compute Sim3}
+
+We need to find the transformation between current and loop KeyFrame:
+
+\begin{lstlisting}[caption={ComputeSim3 concept}]
+bool LoopClosing::ComputeSim3()
+{
+    for(KeyFrame* pKF : mvpEnoughConsistentCandidates)
+    {
+        // 1. Match features between current KF and candidate
+        vector<MapPoint*> vpMatchedPoints;
+        int nMatches = ORBmatcher::SearchByBoW(mpCurrentKF, pKF, 
+                                               vpMatchedPoints);
+        
+        if(nMatches < 20)
+            continue;
+        
+        // 2. Compute Sim3 using RANSAC
+        Sim3Solver solver(mpCurrentKF, pKF, vpMatchedPoints);
+        
+        cv::Mat Scm;  // Similarity transformation
+        if(solver.ComputeSim3(Scm))
+        {
+            mScw = Scm;
+            mpMatchedKF = pKF;
+            return true;
+        }
+    }
+    return false;
+}
+\end{lstlisting}
+
+\textbf{Note:} \texttt{Sim3} includes scale, which is important for monocular SLAM where scale can drift.
+
+\subsection{Step 3: Correct Loop}
+
+Once we find a valid loop, we correct the drift:
+
+\begin{lstlisting}[caption={CorrectLoop concept}]
+void LoopClosing::CorrectLoop()
+{
+    // 1. Stop LocalMapping temporarily
+    mpLocalMapper->RequestStop();
+    
+    // 2. Compute correction for current KeyFrame
+    Sophus::Sim3f Scw = mpCurrentKF->GetPose() * mScw.inverse();
+    
+    // 3. Propagate correction to all connected KeyFrames
+    for(KeyFrame* pKF : mvpCurrentConnectedKFs)
+    {
+        Sophus::Sim3f CorrectedPose = Scw * pKF->GetPoseRelativeTo(mpCurrentKF);
+        pKF->SetPose(CorrectedPose);
+    }
+    
+    // 4. Correct all associated MapPoints
+    for(MapPoint* pMP : mvpLoopMapPoints)
+    {
+        pMP->SetWorldPos(CorrectedPos);
+    }
+    
+    // 5. Fuse duplicate MapPoints
+    SearchAndFuse();
+    
+    // 6. Pose-graph optimization
+    Optimizer::OptimizeEssentialGraph(...);
+    
+    // 7. Resume LocalMapping
+    mpLocalMapper->Release();
+}
+\end{lstlisting}
+
+\subsection{Step 4: Global Bundle Adjustment}
+
+After loop closure, run global BA to refine everything:
+
+\begin{lstlisting}[caption={Global BA}]
+void LoopClosing::RunGlobalBundleAdjustment()
+{
+    // Run in a separate thread to not block loop closing
+    thread* pThread = new thread(&LoopClosing::GlobalBundleAdjustmentThread, 
+                                 this);
+}
+
+void LoopClosing::GlobalBundleAdjustmentThread()
+{
+    // Optimize ALL KeyFrames and MapPoints
+    Optimizer::GlobalBundleAdjustment(mpAtlas->GetCurrentMap());
+    
+    // Merge corrected map back
+    // ...
+}
+\end{lstlisting}
+
+\subsection{The Covisibility Graph}
+
+Loop closing uses the covisibility graph to propagate corrections:
+
+\begin{itemize}
+    \item \textbf{Nodes}: KeyFrames
+    \item \textbf{Edges}: Weighted by number of shared MapPoints
+    \item \textbf{Use}: Find which KeyFrames are affected by a correction
+\end{itemize}
+
+\begin{lstlisting}[caption={Covisibility example}]
+// Get KeyFrames that share at least 15 MapPoints with pKF
+vector<KeyFrame*> vpCovisibleKFs = pKF->GetCovisiblesByWeight(15);
+\end{lstlisting}

@@ -1,0 +1,83 @@
+%==============================================================================
+\section{Epilogue: The Complete Picture}
+%==============================================================================
+
+\subsection{Data Flow Summary}
+
+\begin{verbatim}
+                 IMAGE
+                   |
+                   v
+    +---------------------------+
+    |      mono_euroc.cc        |  Load image, call TrackMonocular
+    +---------------------------+
+                   |
+                   v
+    +---------------------------+
+    |         System            |  Convert to grayscale, delegate
+    +---------------------------+
+                   |
+                   v
+    +---------------------------+
+    |        Tracking           |  Create Frame, estimate pose
+    +---------------------------+
+          |              \
+          v               v
+    +-----------+   +---------------+
+    |   Frame   |   | LocalMapping  |  (Background)
+    +-----------+   +---------------+
+          |               |
+          v               v
+    +-----------+   +---------------+
+    | MapPoint  |   | LoopClosing   |  (Background)
+    +-----------+   +---------------+
+\end{verbatim}
+
+\subsection{Thread Model}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Thread} & \textbf{Speed} & \textbf{Responsibility} \\
+\midrule
+Main (Tracking) & Real-time (30 fps) & Pose estimation \\
+LocalMapping & Background & Map building, local BA \\
+LoopClosing & Background & Loop detection, global BA \\
+Viewer & Background & Visualization \\
+\bottomrule
+\end{tabular}
+\caption{ORB-SLAM3 threading model}
+\end{table}
+
+\subsection{The Four Core Data Structures}
+
+\begin{enumerate}
+    \item \textbf{Frame}: A snapshot with features (temporary)
+    \item \textbf{KeyFrame}: An important snapshot stored permanently
+    \item \textbf{MapPoint}: A 3D point in the world
+    \item \textbf{Map/Atlas}: Collection of KeyFrames and MapPoints
+\end{enumerate}
+
+\subsection{Where to Go Next}
+
+Now that you understand the big picture, you can dive deeper into:
+
+\begin{enumerate}
+    \item \textbf{Feature Matching}: How does \texttt{ORBmatcher} work?
+    \item \textbf{Optimization}: How does g2o refine the poses?
+    \item \textbf{Map Management}: How does Atlas handle multiple maps?
+    \item \textbf{IMU Integration}: How are inertial measurements fused?
+    \item \textbf{Your XFeat Modifications}: How does the Pure XFeat pipeline differ?
+\end{enumerate}
+
+\subsection{Key Takeaways}
+
+\begin{itemize}
+    \item ORB-SLAM3 is a \textbf{multi-threaded} system with clear separation of concerns
+    \item \textbf{Tracking} is the hot path that must run in real-time
+    \item \textbf{LocalMapping} and \textbf{LoopClosing} do the heavy lifting in the background
+    \item Everything revolves around \textbf{KeyFrames} and \textbf{MapPoints}
+    \item The \textbf{covisibility graph} connects KeyFrames that see the same points
+    \item \textbf{Bundle Adjustment} is the secret sauce that makes it all accurate
+\end{itemize}

@@ -1,0 +1,49 @@
+%==============================================================================
+\section{Prologue: The Cast of Characters}
+%==============================================================================
+
+Before we begin our story, let's meet the main characters. ORB-SLAM3 is built around a handful of key classes that work together like actors on a stage.
+
+\subsection{The Main Characters}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Class} & \textbf{Role} & \textbf{File} \\ 
+\midrule
+\texttt{System} & The Director & \texttt{System.h/.cc} \\
+\texttt{Tracking} & The Lead Actor & \texttt{Tracking.h/.cc} \\
+\texttt{LocalMapping} & The Builder & \texttt{LocalMapping.h/.cc} \\
+\texttt{LoopClosing} & The Proofreader & \texttt{LoopClosing.h/.cc} \\
+\texttt{Atlas} & The Library & \texttt{Atlas.h/.cc} \\
+\texttt{Frame} & The Photo & \texttt{Frame.h/.cc} \\
+\texttt{KeyFrame} & The Important Photo & \texttt{KeyFrame.h/.cc} \\
+\texttt{MapPoint} & The 3D Landmark & \texttt{MapPoint.h/.cc} \\
+\bottomrule
+\end{tabular}
+\caption{The main classes in ORB-SLAM3 and their roles}
+\end{table}
+
+\subsection{The Supporting Cast}
+
+\begin{itemize}[leftmargin=*]
+    \item \textbf{ORBextractor}: Finds interesting points in images (or \texttt{ONNXFeatureExtractor} for XFeat)
+    \item \textbf{ORBVocabulary}: A dictionary for recognizing places (used for loop closure)
+    \item \textbf{GeometricCamera}: Knows how to project 3D points onto the image
+    \item \textbf{g2o}: The optimization library that refines everything
+    \item \textbf{Viewer}: Draws the map so you can see what's happening
+\end{itemize}
+
+\subsection{How They Work Together}
+
+Think of ORB-SLAM3 like a film production:
+
+\begin{enumerate}
+    \item \textbf{The Director (System)} doesn't act, but coordinates everyone
+    \item \textbf{The Lead Actor (Tracking)} is always on stage, processing every image
+    \item \textbf{The Builder (LocalMapping)} works backstage, building the set
+    \item \textbf{The Proofreader (LoopClosing)} checks for mistakes and fixes them
+    \item \textbf{The Photos (Frame/KeyFrame)} are the snapshots that document everything
+    \item \textbf{The Landmarks (MapPoint)} are the 3D decorations that make the scene real
+\end{enumerate}

@@ -1,0 +1,123 @@
+%==============================================================================
+\section{Appendix B: Quick Reference}
+%==============================================================================
+
+\subsection{Key Data Types}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{@{}llp{7cm}@{}}
+\toprule
+\textbf{Type} & \textbf{Variable} & \textbf{Meaning} \\
+\midrule
+\texttt{Sophus::SE3f} & \texttt{mTcw} & Camera pose (world $\to$ camera) \\
+\texttt{Sophus::SE3f} & \texttt{mTwc} & Camera pose (camera $\to$ world) \\
+\texttt{Eigen::Vector3f} & \texttt{mOw} & Camera center in world coords \\
+\texttt{Eigen::Matrix3f} & \texttt{mRcw} & Rotation (world $\to$ camera) \\
+\texttt{cv::Mat} & \texttt{mK} & Camera calibration matrix ($3\times3$) \\
+\texttt{cv::Mat} & \texttt{mDistCoef} & Distortion coefficients \\
+\texttt{cv::Mat} & \texttt{mDescriptors} & Feature descriptors ($N\times32$ for ORB) \\
+\texttt{vector<cv::KeyPoint>} & \texttt{mvKeys} & 2D keypoint locations \\
+\texttt{vector<cv::KeyPoint>} & \texttt{mvKeysUn} & Undistorted keypoints \\
+\texttt{vector<MapPoint*>} & \texttt{mvpMapPoints} & 3D associations for each keypoint \\
+\texttt{DBoW2::BowVector} & \texttt{mBowVec} & Bag-of-Words representation \\
+\bottomrule
+\end{tabular}
+\caption{Common variables you'll encounter}
+\end{table}
+
+\subsection{Naming Conventions}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Prefix} & \textbf{Meaning} \\
+\midrule
+\texttt{m} & Member variable \\
+\texttt{mp} & Member pointer \\
+\texttt{mv} & Member vector \\
+\texttt{mb} & Member boolean \\
+\texttt{mn} & Member number (int/unsigned) \\
+\texttt{mf} & Member float \\
+\texttt{p} & Pointer (local variable) \\
+\texttt{v} & Vector (local variable) \\
+\texttt{b} & Boolean (local variable) \\
+\texttt{n} & Number (local variable) \\
+\bottomrule
+\end{tabular}
+\caption{Hungarian notation used in ORB-SLAM3}
+\end{table}
+
+\subsection{Key Functions Cheat Sheet}
+
+\subsubsection{System}
+\begin{itemize}
+    \item \texttt{TrackMonocular(im, timestamp)} $\rightarrow$ Process one image
+    \item \texttt{Shutdown()} $\rightarrow$ Stop all threads
+    \item \texttt{SaveTrajectoryEuRoC(file)} $\rightarrow$ Save poses
+\end{itemize}
+
+\subsubsection{Tracking}
+\begin{itemize}
+    \item \texttt{GrabImageMonocular(im, t)} $\rightarrow$ Entry point
+    \item \texttt{Track()} $\rightarrow$ Main logic
+    \item \texttt{TrackWithMotionModel()} $\rightarrow$ Fast pose estimation
+    \item \texttt{TrackReferenceKeyFrame()} $\rightarrow$ Fallback
+    \item \texttt{TrackLocalMap()} $\rightarrow$ Refine pose
+    \item \texttt{CreateNewKeyFrame()} $\rightarrow$ Insert KF
+\end{itemize}
+
+\subsubsection{Frame}
+\begin{itemize}
+    \item \texttt{SetPose(Tcw)} $\rightarrow$ Set camera pose
+    \item \texttt{GetPose()} $\rightarrow$ Get camera pose
+    \item \texttt{ComputeBoW()} $\rightarrow$ Compute Bag-of-Words
+    \item \texttt{GetFeaturesInArea(x, y, r)} $\rightarrow$ Spatial query
+\end{itemize}
+
+\subsubsection{Optimizer}
+\begin{itemize}
+    \item \texttt{PoseOptimization(\&frame)} $\rightarrow$ Refine frame pose
+    \item \texttt{LocalBundleAdjustment(pKF)} $\rightarrow$ Local BA
+    \item \texttt{GlobalBundleAdjustment(pMap)} $\rightarrow$ Global BA
+\end{itemize}
+
+\subsection{Common Debug Patterns}
+
+\begin{lstlisting}[caption={Useful debug prints}]
+// Print current frame ID and timestamp
+cout << "Frame " << mCurrentFrame.mnId 
+     << " @ " << mCurrentFrame.mTimeStamp << endl;
+
+// Print number of features
+cout << "Features: " << mCurrentFrame.N << endl;
+
+// Print number of matched MapPoints
+int nMatches = 0;
+for(int i = 0; i < mCurrentFrame.N; i++)
+    if(mCurrentFrame.mvpMapPoints[i])
+        nMatches++;
+cout << "Matches: " << nMatches << endl;
+
+// Print camera pose
+cout << "Pose:\n" << mCurrentFrame.GetPose().matrix() << endl;
+\end{lstlisting}
+
+\subsection{Key Thresholds}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Parameter} & \textbf{Typical Value} & \textbf{Used In} \\
+\midrule
+Min matches for init & 100 & MonocularInitialization \\
+Min matches for tracking & 20 & TrackWithMotionModel \\
+Min inliers for local map & 30 & TrackLocalMap \\
+BoW similarity threshold & 0.8 & Loop detection \\
+Triangulation parallax & 1.0° & CreateNewMapPoints \\
+\bottomrule
+\end{tabular}
+\caption{Important thresholds in ORB-SLAM3}
+\end{table}

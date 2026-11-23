@@ -1,0 +1,296 @@
+%==============================================================================
+\section{Act III: The Hero (\texttt{Tracking.h/.cc})}
+%==============================================================================
+
+The \texttt{Tracking} class is where the magic happens. It takes raw images and produces camera poses.
+
+\subsection{The Tracking States}
+
+Tracking operates like a state machine:
+
+\begin{lstlisting}[caption={Tracking states}]
+enum eTrackingState {
+    SYSTEM_NOT_READY = -1,  // Still initializing
+    NO_IMAGES_YET = 0,      // Haven't received any images
+    NOT_INITIALIZED = 1,    // Trying to initialize the map
+    OK = 2,                 // Normal operation
+    RECENTLY_LOST = 3,      // Just lost tracking (trying to recover)
+    LOST = 4,               // Completely lost
+    OK_KLT = 5              // Tracking with KLT (fallback)
+};
+\end{lstlisting}
+
+\textbf{The lifecycle:}
+\begin{enumerate}
+    \item Start in \texttt{NO\_IMAGES\_YET}
+    \item First image $\rightarrow$ transition to \texttt{NOT\_INITIALIZED}
+    \item After successful initialization $\rightarrow$ transition to \texttt{OK}
+    \item If tracking fails $\rightarrow$ \texttt{RECENTLY\_LOST} $\rightarrow$ try relocalization
+    \item If relocalization fails $\rightarrow$ \texttt{LOST}
+\end{enumerate}
+
+\subsection{The Main Entry: GrabImageMonocular}
+
+\texttt{GrabImageMonocular} is called by System for each new image:
+
+\begin{lstlisting}[caption={GrabImageMonocular simplified}]
+Sophus::SE3f Tracking::GrabImageMonocular(const cv::Mat &im, 
+                                          const double &timestamp, 
+                                          string filename)
+{
+    // 1. Store the image
+    mImGray = im;
+    
+    // 2. Create a Frame (feature extraction happens here!)
+    mCurrentFrame = Frame(mImGray, timestamp, mpORBextractorLeft, 
+                          mpORBVocabulary, mpCamera, mDistCoef, 
+                          mbf, mThDepth, &mLastFrame, mImuCalib);
+    
+    // 3. The main tracking logic
+    Track();
+    
+    // 4. Return the estimated pose
+    return mCurrentFrame.GetPose();
+}
+\end{lstlisting}
+
+\subsection{Inside \texttt{Track()}: The Heart of SLAM}
+
+The \texttt{Track()} function is a 500+ line behemoth, but its structure is simple:
+
+\begin{lstlisting}[caption={Track() simplified structure}]
+void Tracking::Track()
+{
+    // PHASE 1: INITIALIZATION
+    if(mState == NOT_INITIALIZED)
+    {
+        MonocularInitialization();  // Try to initialize the map
+        return;
+    }
+    
+    // PHASE 2: POSE ESTIMATION (if initialized)
+    bool bOK = false;
+    
+    // First attempt: Use motion model
+    if(mbVelocity)
+        bOK = TrackWithMotionModel();
+    
+    // Fallback: Match against reference keyframe
+    if(!bOK)
+        bOK = TrackReferenceKeyFrame();
+    
+    // If still failing: Try relocalization
+    if(!bOK)
+        bOK = Relocalization();
+    
+    // PHASE 3: TRACK LOCAL MAP (refine pose using more points)
+    if(bOK)
+        bOK = TrackLocalMap();
+    
+    // PHASE 4: KEYFRAME DECISION
+    if(bOK && NeedNewKeyFrame())
+        CreateNewKeyFrame();
+    
+    // Update state
+    mState = bOK ? OK : LOST;
+}
+\end{lstlisting}
+
+\subsection{Phase 1: Monocular Initialization}
+
+Monocular SLAM has a chicken-and-egg problem:
+\begin{itemize}
+    \item To estimate the camera pose, we need 3D points
+    \item To triangulate 3D points, we need two camera poses
+\end{itemize}
+
+The solution: \textbf{Two-View Reconstruction}
+
+\begin{lstlisting}[caption={MonocularInitialization simplified}]
+void Tracking::MonocularInitialization()
+{
+    // Step 1: First frame becomes the "initial frame"
+    if(mState == NO_IMAGES_YET)
+    {
+        mInitialFrame = Frame(mCurrentFrame);
+        return;
+    }
+    
+    // Step 2: Match features between initial and current frame
+    vector<int> vMatches;
+    int nMatches = ORBmatcher::SearchForInitialization(
+        mInitialFrame, mCurrentFrame, vMatches);
+    
+    if(nMatches < 100)
+        return;  // Not enough matches, wait for better frame
+    
+    // Step 3: Compute Homography and Fundamental matrix
+    // (two competing geometric models)
+    cv::Mat H, F;
+    float SH, SF;  // Scores for each model
+    ComputeH21(vMatches, SH, H);
+    ComputeF21(vMatches, SF, F);
+    
+    // Step 4: Choose the better model and recover pose
+    cv::Mat R, t;
+    vector<cv::Point3f> vP3D;  // Triangulated 3D points
+    
+    float RH = SH / (SH + SF);  // "Homographyness"
+    
+    if(RH > 0.4)
+        ReconstructH(H, R, t, vP3D);  // Planar scene
+    else
+        ReconstructF(F, R, t, vP3D);  // General scene
+    
+    // Step 5: Create the initial map
+    CreateInitialMapMonocular();
+    
+    mState = OK;  // Initialization complete!
+}
+\end{lstlisting}
+
+\textbf{Key insight:} After initialization, we have:
+\begin{itemize}
+    \item Two KeyFrames (the initial frame and current frame)
+    \item A set of 3D MapPoints (triangulated from the two views)
+    \item An arbitrary scale (monocular SLAM cannot recover absolute scale)
+\end{itemize}
+
+\subsection{Phase 2: Pose Estimation}
+
+Once initialized, we estimate the camera pose for each new frame.
+
+\subsubsection{TrackWithMotionModel}
+
+This is the fastest method. We assume the camera is moving at constant velocity:
+
+\begin{lstlisting}[caption={TrackWithMotionModel concept}]
+bool Tracking::TrackWithMotionModel()
+{
+    // 1. Predict pose using velocity
+    Sophus::SE3f Tcw_predicted = mVelocity * mLastFrame.GetPose();
+    mCurrentFrame.SetPose(Tcw_predicted);
+    
+    // 2. Project MapPoints from last frame into current frame
+    // 3. Search for matches near projected locations
+    int nMatches = ORBmatcher::SearchByProjection(mCurrentFrame, mLastFrame);
+    
+    if(nMatches < 20)
+        return false;
+    
+    // 4. Optimize pose using matched points
+    Optimizer::PoseOptimization(&mCurrentFrame);
+    
+    return true;
+}
+\end{lstlisting}
+
+\subsubsection{TrackReferenceKeyFrame}
+
+Fallback when motion model fails:
+
+\begin{lstlisting}[caption={TrackReferenceKeyFrame concept}]
+bool Tracking::TrackReferenceKeyFrame()
+{
+    // 1. Compute Bag-of-Words for current frame
+    mCurrentFrame.ComputeBoW();
+    
+    // 2. Match against reference keyframe using BoW
+    int nMatches = ORBmatcher::SearchByBoW(mpReferenceKF, mCurrentFrame);
+    
+    if(nMatches < 15)
+        return false;
+    
+    // 3. Use reference keyframe pose as initial guess
+    mCurrentFrame.SetPose(mpReferenceKF->GetPose());
+    
+    // 4. Optimize pose
+    Optimizer::PoseOptimization(&mCurrentFrame);
+    
+    return true;
+}
+\end{lstlisting}
+
+\subsection{Phase 3: Track Local Map}
+
+After initial pose estimation, we refine it using more MapPoints:
+
+\begin{lstlisting}[caption={TrackLocalMap concept}]
+bool Tracking::TrackLocalMap()
+{
+    // 1. Find all keyframes that share MapPoints with current frame
+    UpdateLocalKeyFrames();
+    
+    // 2. Collect all MapPoints visible from those keyframes
+    UpdateLocalPoints();  // mvpLocalMapPoints
+    
+    // 3. Project local MapPoints into current frame
+    //    Search for matches
+    SearchLocalPoints();
+    
+    // 4. Final pose optimization with all matches
+    Optimizer::PoseOptimization(&mCurrentFrame);
+    
+    // 5. Count inliers
+    mnMatchesInliers = CountInliers();
+    
+    return (mnMatchesInliers > 30);
+}
+\end{lstlisting}
+
+\textbf{Key insight:} Local Map Tracking uses many more points than the initial pose estimation, giving a more accurate and robust pose.
+
+\subsection{Phase 4: KeyFrame Decision}
+
+Not every frame becomes a KeyFrame. We only insert new KeyFrames when:
+
+\begin{lstlisting}[caption={NeedNewKeyFrame simplified}]
+bool Tracking::NeedNewKeyFrame()
+{
+    // 1. Minimum time since last keyframe
+    if(mCurrentFrame.mnId < mnLastKeyFrameId + mMinFrames)
+        return false;
+    
+    // 2. Local mapping must not be busy
+    if(mpLocalMapper->isStopped() || mpLocalMapper->stopRequested())
+        return false;
+    
+    // 3. Significant change in observation
+    float refRatio = 0.9f;  // 90% of reference KF points still visible
+    int nTrackedClose = CountClosePoints();
+    
+    bool c1 = (mnMatchesInliers < mpReferenceKF->TrackedMapPoints * refRatio);
+    bool c2 = (nTrackedClose < 100);  // Few close points
+    
+    return (c1 || c2);
+}
+\end{lstlisting}
+
+\textbf{Key insight:} KeyFrames are inserted sparingly to avoid redundancy, but frequently enough to maintain map quality.
+
+\subsection{The Key Member Variables}
+
+\begin{lstlisting}[caption={Important Tracking members}]
+// The two most important frames
+Frame mCurrentFrame;   // The frame being processed NOW
+Frame mLastFrame;      // The previous frame
+
+// Tracking state
+eTrackingState mState;
+
+// Current matches
+int mnMatchesInliers;
+
+// Local map
+KeyFrame* mpReferenceKF;
+vector<KeyFrame*> mvpLocalKeyFrames;
+vector<MapPoint*> mvpLocalMapPoints;
+
+// Motion model
+Sophus::SE3f mVelocity;
+bool mbVelocity;
+
+// Feature extraction
+ORBextractor* mpORBextractorLeft;
+ONNXFeatureExtractor* mpXFeatExtractor;  // Your XFeat mode
+\end{lstlisting}

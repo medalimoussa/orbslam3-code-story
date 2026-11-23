@@ -1,0 +1,143 @@
+%==============================================================================
+\section{Act IV: The Photo (\texttt{Frame.h/.cc})}
+%==============================================================================
+
+The \texttt{Frame} class represents a single image capture. It is the fundamental data unit that flows through the system.
+
+\subsection{What Does a Frame Contain?}
+
+\begin{lstlisting}[caption={Key Frame members}]
+class Frame {
+    // Identity
+    long unsigned int mnId;       // Unique frame ID
+    double mTimeStamp;            // When captured
+    
+    // Features (the interesting points)
+    int N;                        // Number of keypoints
+    vector<cv::KeyPoint> mvKeys;  // 2D keypoint locations
+    vector<cv::KeyPoint> mvKeysUn;  // Undistorted keypoints
+    cv::Mat mDescriptors;         // Feature descriptors (Nx32 for ORB)
+    
+    // 3D associations
+    vector<MapPoint*> mvpMapPoints;  // Pointer to 3D point for each keypoint
+    vector<bool> mvbOutlier;      // Outlier flags
+    
+    // Camera
+    cv::Mat mK;                   // Calibration matrix
+    cv::Mat mDistCoef;            // Distortion coefficients
+    GeometricCamera* mpCamera;    // Camera model
+    
+    // Pose
+    Sophus::SE3f mTcw;            // Camera pose (world to camera)
+    bool mbHasPose;               // Is pose valid?
+    
+    // Optimization structures
+    vector<size_t> mGrid[64][48]; // Spatial grid for fast search
+    DBoW2::BowVector mBowVec;     // Bag-of-Words representation
+};
+\end{lstlisting}
+
+\subsection{The Frame Constructor Journey}
+
+When a new Frame is created, this happens:
+
+\begin{enumerate}
+    \item \textbf{Assign ID}: \texttt{mnId = nNextId++}
+    \item \textbf{Extract Features}: Call ORBextractor (or XFeat)
+    \item \textbf{Undistort Keypoints}: Correct for lens distortion
+    \item \textbf{Initialize Associations}: \texttt{mvpMapPoints} all set to NULL
+    \item \textbf{Assign to Grid}: Organize keypoints into spatial cells
+    \item \textbf{Setup Scale Pyramid}: Prepare multi-scale information
+\end{enumerate}
+
+\subsection{The Different Constructors}
+
+Frame has multiple constructors for different scenarios:
+
+\begin{table}[H]
+\centering
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Constructor} & \textbf{Use Case} \\
+\midrule
+\texttt{Frame()} & Default, empty frame \\
+\texttt{Frame(const Frame\&)} & Copy constructor \\
+\texttt{Frame(imLeft, imRight, ...)} & Stereo cameras \\
+\texttt{Frame(imGray, imDepth, ...)} & RGB-D cameras \\
+\texttt{Frame(imGray, timestamp, ...)} & Monocular camera \\
+\texttt{Frame(imGray, keypoints, descriptors, ...)} & Pure XFeat mode \\
+\bottomrule
+\end{tabular}
+\caption{Frame constructor variants}
+\end{table}
+
+\subsection{Monocular vs. XFeat Constructor}
+
+The standard constructor calls \texttt{ExtractORB()}, which is slow.
+
+Your custom \textbf{Pure XFeat constructor} skips this:
+
+\begin{table}[H]
+\centering
+\begin{tabular}{@{}lcc@{}}
+\toprule
+\textbf{Step} & \textbf{Standard ORB} & \textbf{Pure XFeat} \\
+\midrule
+Feature Extraction & Calls \texttt{ExtractORB()} & Skipped (pre-extracted) \\
+Undistortion & Calls \texttt{UndistortKeyPoints()} & Skipped (pre-undistorted) \\
+Descriptors & 256-bit binary & 64-float vectors \\
+Scale Levels & From ORBextractor (8 levels) & Manually set (3 levels) \\
+\bottomrule
+\end{tabular}
+\caption{Comparison of Frame constructors}
+\end{table}
+
+\subsection{The Spatial Grid}
+
+To speed up feature matching, the Frame divides the image into a grid:
+
+\begin{lstlisting}[caption={Spatial grid for fast lookup}]
+#define FRAME_GRID_COLS 64
+#define FRAME_GRID_ROWS 48
+
+// Each cell contains indices of keypoints in that region
+vector<size_t> mGrid[FRAME_GRID_COLS][FRAME_GRID_ROWS];
+\end{lstlisting}
+
+This allows fast queries like: ``Find all features within 20 pixels of point (x, y)'' without scanning all N keypoints.
+
+\subsection{Key Methods}
+
+\begin{lstlisting}[caption={Important Frame methods}]
+// Set/Get the camera pose
+void SetPose(const Sophus::SE3f &Tcw);
+Sophus::SE3f GetPose() const;
+
+// Compute Bag-of-Words (for loop closure)
+void ComputeBoW();
+
+// Find features in a region (uses the grid)
+vector<size_t> GetFeaturesInArea(float x, float y, float r);
+
+// Check if a MapPoint is visible
+bool isInFrustum(MapPoint* pMP, float viewingCosLimit);
+\end{lstlisting}
+
+\subsection{Frame vs KeyFrame}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{@{}lcc@{}}
+\toprule
+\textbf{Aspect} & \textbf{Frame} & \textbf{KeyFrame} \\
+\midrule
+Lifespan & Temporary & Permanent \\
+Storage & Only current/last & All in map \\
+Connections & None & Covisibility graph \\
+Optimization & Pose only & Pose + structure \\
+Loop closure & Cannot trigger & Can trigger \\
+Count per sequence & Thousands & Hundreds \\
+\bottomrule
+\end{tabular}
+\caption{Frames are temporary; KeyFrames are permanent}
+\end{table}

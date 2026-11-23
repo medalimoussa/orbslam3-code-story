@@ -1,0 +1,117 @@
+%==============================================================================
+\section{Act I: The Beginning (\texttt{mono\_euroc.cc})}
+%==============================================================================
+
+Our story begins in the \texttt{Examples/Monocular/} folder. This is the \textbf{entry point}---the \texttt{main()} function where everything starts.
+
+\subsection{Scene 1: The Command Line}
+
+When you run ORB-SLAM3 from the terminal:
+\begin{lstlisting}[language=bash,numbers=none]
+./mono_euroc ../Vocabulary/ORBvoc.txt TUM_mono.yaml /path/to/MH_01 timestamps.txt
+\end{lstlisting}
+
+The program expects these arguments:
+\begin{enumerate}
+    \item \textbf{Vocabulary file}: The ORB dictionary for place recognition
+    \item \textbf{Settings file}: Camera calibration, feature parameters, etc.
+    \item \textbf{Image folder}: Where the images are stored
+    \item \textbf{Timestamps file}: When each image was captured
+\end{enumerate}
+
+\subsection{Scene 2: Loading the Images}
+
+The first thing the program does is load the list of images:
+
+\begin{lstlisting}[caption={Loading images in mono\_euroc.cc (simplified)},label=lst:loadimages]
+// Load all image paths and timestamps
+vector<string> vstrImageFilenames;
+vector<double> vTimestamps;
+
+LoadImages("/path/to/MH_01/mav0/cam0/data", 
+           "timestamps.txt",
+           vstrImageFilenames, 
+           vTimestamps);
+
+// Now we have:
+// vstrImageFilenames[0] = ".../1403636579763555584.png"
+// vstrImageFilenames[1] = ".../1403636579813555456.png"
+// ...
+\end{lstlisting}
+
+\textbf{Key insight:} At this point, we haven't done any SLAM yet. We're just preparing a list of ``what images to process''.
+
+\subsection{Scene 3: Creating the SLAM System}
+
+This is the most important line in the entire file:
+
+\begin{lstlisting}[caption={Creating the SLAM System}]
+ORB_SLAM3::System SLAM(argv[1], argv[2], ORB_SLAM3::System::MONOCULAR, true);
+//                     ^vocab    ^config  ^sensor type              ^use viewer
+\end{lstlisting}
+
+When this line executes, \textbf{the entire SLAM machinery is created}:
+\begin{itemize}
+    \item The vocabulary is loaded from disk (takes a few seconds)
+    \item Camera calibration is parsed from the YAML file
+    \item Three threads are spawned:
+    \begin{enumerate}
+        \item \textbf{Tracking} (runs in the main thread)
+        \item \textbf{LocalMapping} (background thread)
+        \item \textbf{LoopClosing} (background thread)
+    \end{enumerate}
+    \item The Viewer window opens (if enabled)
+\end{itemize}
+
+\textit{What happens inside the \texttt{System} constructor? We'll explore this in the next section.}
+
+\subsection{Scene 4: The Main Loop}
+
+After initialization, we enter the main loop---the heartbeat of SLAM:
+
+\begin{lstlisting}[caption={The main processing loop (simplified)}]
+for(int ni = 0; ni < nImages; ni++)
+{
+    // 1. Read the image from disk
+    cv::Mat im = cv::imread(vstrImageFilenames[ni], cv::IMREAD_UNCHANGED);
+    double timestamp = vTimestamps[ni];
+    
+    // 2. THE MAGIC LINE: Feed image to SLAM
+    SLAM.TrackMonocular(im, timestamp);
+    
+    // 3. (Optional) Wait to simulate real-time
+    // usleep(...);
+}
+\end{lstlisting}
+
+\textbf{Key insight:} The entire complexity of SLAM is hidden behind one function call: \texttt{TrackMonocular()}. This function takes a raw image and returns the camera pose. Everything else---feature extraction, matching, optimization, map building---happens inside.
+
+\subsection{Scene 5: Cleanup}
+
+After all images are processed:
+\begin{lstlisting}[caption={Shutting down}]
+SLAM.Shutdown();  // Stop all threads gracefully
+
+// Save trajectory for evaluation
+SLAM.SaveTrajectoryEuRoC("CameraTrajectory.txt");
+SLAM.SaveKeyFrameTrajectoryEuRoC("KeyFrameTrajectory.txt");
+\end{lstlisting}
+
+\subsection{Summary: The Entry Point Flow}
+
+\begin{verbatim}
+main()
+  |
+  +-- Parse command line arguments
+  |
+  +-- LoadImages() --> Fill vstrImageFilenames, vTimestamps
+  |
+  +-- Create System SLAM(...) --> Spawns 3 threads
+  |
+  +-- for each image:
+  |       SLAM.TrackMonocular(im, timestamp)
+  |
+  +-- SLAM.Shutdown()
+  |
+  +-- SLAM.SaveTrajectory...()
+\end{verbatim}

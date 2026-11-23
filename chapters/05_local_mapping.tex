@@ -1,0 +1,186 @@
+%==============================================================================
+\section{Act V: The Builder (\texttt{LocalMapping})}
+%==============================================================================
+
+While Tracking estimates poses, \texttt{LocalMapping} builds the map in the background.
+
+\subsection{Why a Separate Thread?}
+
+Local Bundle Adjustment (LBA) is too slow to run in real-time. If we did LBA for every frame, the system would lag behind. Instead:
+
+\begin{itemize}
+    \item \textbf{Tracking} runs fast (real-time) and just estimates pose
+    \item \textbf{LocalMapping} runs slower but builds a better map
+    \item They communicate through a queue of KeyFrames
+\end{itemize}
+
+\subsection{The Local Mapping Loop}
+
+\begin{lstlisting}[caption={LocalMapping::Run() simplified}]
+void LocalMapping::Run()
+{
+    while(!mbFinishRequested)
+    {
+        // Wait for new KeyFrame from Tracking
+        if(CheckNewKeyFrames())
+        {
+            // 1. Process the new KeyFrame
+            ProcessNewKeyFrame();
+            
+            // 2. Remove bad MapPoints
+            MapPointCulling();
+            
+            // 3. Create new MapPoints by triangulation
+            CreateNewMapPoints();
+            
+            // 4. Fuse duplicate MapPoints
+            SearchInNeighbors();
+            
+            // 5. Local Bundle Adjustment
+            if(!CheckNewKeyFrames())
+            {
+                Optimizer::LocalBundleAdjustment(mpCurrentKeyFrame, ...);
+            }
+            
+            // 6. Remove redundant KeyFrames
+            KeyFrameCulling();
+        }
+    }
+}
+\end{lstlisting}
+
+\subsection{Step 1: ProcessNewKeyFrame}
+
+When a new KeyFrame arrives:
+
+\begin{lstlisting}[caption={ProcessNewKeyFrame}]
+void LocalMapping::ProcessNewKeyFrame()
+{
+    // 1. Get the KeyFrame from the queue
+    mpCurrentKeyFrame = mlNewKeyFrames.front();
+    mlNewKeyFrames.pop_front();
+    
+    // 2. Compute Bag-of-Words
+    mpCurrentKeyFrame->ComputeBoW();
+    
+    // 3. Associate MapPoints to the new KeyFrame
+    for(int i = 0; i < mpCurrentKeyFrame->N; i++)
+    {
+        MapPoint* pMP = mpCurrentKeyFrame->mvpMapPoints[i];
+        if(pMP)
+            pMP->AddObservation(mpCurrentKeyFrame, i);
+    }
+    
+    // 4. Update covisibility graph
+    mpCurrentKeyFrame->UpdateConnections();
+    
+    // 5. Insert into the map
+    mpAtlas->GetCurrentMap()->AddKeyFrame(mpCurrentKeyFrame);
+}
+\end{lstlisting}
+
+\subsection{Step 3: CreateNewMapPoints}
+
+This is where new 3D points are born:
+
+\begin{lstlisting}[caption={CreateNewMapPoints simplified}]
+void LocalMapping::CreateNewMapPoints()
+{
+    // For each neighboring KeyFrame
+    for(KeyFrame* pKF2 : vpNeighKFs)
+    {
+        // Match features between current KF and neighbor
+        vector<pair<int, int>> vMatchedIndices;
+        ORBmatcher::SearchForTriangulation(mpCurrentKeyFrame, pKF2, 
+                                           vMatchedIndices);
+        
+        // For each match, triangulate a new 3D point
+        for(auto& match : vMatchedIndices)
+        {
+            cv::Point3f x3D = Triangulate(match);
+            
+            // Create new MapPoint
+            MapPoint* pMP = new MapPoint(x3D, mpCurrentKeyFrame);
+            pMP->AddObservation(mpCurrentKeyFrame, match.first);
+            pMP->AddObservation(pKF2, match.second);
+            
+            mpAtlas->GetCurrentMap()->AddMapPoint(pMP);
+        }
+    }
+}
+\end{lstlisting}
+
+\subsection{Step 5: Local Bundle Adjustment}
+
+This is the expensive step that refines everything:
+
+\begin{lstlisting}[caption={Local BA concept}]
+void Optimizer::LocalBundleAdjustment(KeyFrame* pKF)
+{
+    // Collect local KeyFrames (connected to pKF)
+    list<KeyFrame*> lLocalKeyFrames;
+    
+    // Collect local MapPoints (seen by local KFs)
+    list<MapPoint*> lLocalMapPoints;
+    
+    // Collect fixed KeyFrames (neighbors of local KFs)
+    list<KeyFrame*> lFixedKeyFrames;
+    
+    // Build g2o optimization graph
+    g2o::SparseOptimizer optimizer;
+    
+    // Add pose vertices (local KFs)
+    // Add point vertices (local MPs)
+    // Add edges (reprojection errors)
+    
+    // Optimize!
+    optimizer.optimize(5);  // 5 iterations
+    
+    // Update KeyFrame poses and MapPoint positions
+}
+\end{lstlisting}
+
+\subsection{Step 6: KeyFrame Culling}
+
+Remove redundant KeyFrames to keep the map compact:
+
+\begin{lstlisting}[caption={KeyFrameCulling concept}]
+void LocalMapping::KeyFrameCulling()
+{
+    // For each local KeyFrame
+    for(KeyFrame* pKF : mvpLocalKeyFrames)
+    {
+        // Count how many of its MapPoints are also seen
+        // by at least 3 other KeyFrames
+        int nRedundantObs = 0;
+        
+        for(MapPoint* pMP : pKF->mvpMapPoints)
+        {
+            if(pMP->Observations() >= 3)
+                nRedundantObs++;
+        }
+        
+        // If 90% of points are redundant, cull the KeyFrame
+        if(nRedundantObs > 0.9 * pKF->TrackedMapPoints())
+        {
+            pKF->SetBadFlag();  // Mark for deletion
+        }
+    }
+}
+\end{lstlisting}
+
+\subsection{Communication with Tracking}
+
+The interaction is through shared state:
+
+\begin{lstlisting}[caption={Tracking to LocalMapping communication}]
+// In Tracking::CreateNewKeyFrame()
+mpLocalMapper->InsertKeyFrame(pKF);
+
+// In LocalMapping
+void InsertKeyFrame(KeyFrame* pKF)
+{
+    unique_lock<mutex> lock(mMutexNewKFs);
+    mlNewKeyFrames.push_back(pKF);
+}
+\end{lstlisting}

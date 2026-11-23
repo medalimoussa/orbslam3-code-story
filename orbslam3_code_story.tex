@@ -1,0 +1,99 @@
+\documentclass[11pt,a4paper]{article}
+
+% Packages
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage[margin=1in]{geometry}
+\usepackage{enumitem}
+\usepackage{tocloft}
+\usepackage{booktabs}
+\usepackage{fancyhdr}
+\usepackage{float}
+
+% Colors
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+\definecolor{darkblue}{rgb}{0.0,0.0,0.6}
+\definecolor{darkgreen}{rgb}{0.0,0.4,0.0}
+
+% Listing configuration for C++ code
+\lstdefinestyle{mystyle}{
+    language=C++,
+    backgroundcolor=\color{backcolour},   
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{darkblue}\bfseries,
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,         
+    breaklines=true,                 
+    captionpos=b,                    
+    keepspaces=true,                 
+    numbers=left,                    
+    numbersep=5pt,                  
+    showspaces=false,                
+    showstringspaces=false,
+    showtabs=false,                  
+    tabsize=2,
+    frame=single,
+    morekeywords={vector,cv,Mat,KeyPoint,MapPoint,Sophus,SE3,SE3f,Eigen,Matrix3f,Vector3f,Frame,Tracking,System,Atlas,KeyFrame}
+}
+\lstset{style=mystyle}
+
+% Hyperref setup
+\hypersetup{
+    colorlinks=true,
+    linkcolor=darkblue,
+    filecolor=magenta,      
+    urlcolor=cyan,
+    citecolor=darkgreen,
+}
+
+% Header/Footer
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{ORB-SLAM3 Code Story}
+\lhead{Mohamed Alimoussa}
+\cfoot{\thepage}
+
+% Title
+\title{\textbf{The Story of ORB-SLAM3}\\
+\large{A Complete Code Walkthrough from Main to MapPoint}\\[1em]
+\normalsize{Understanding How ORB-SLAM3 Processes Images and Builds Maps}}
+\author{Mohamed Alimoussa}
+\date{January 2026}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This document tells the complete story of how ORB-SLAM3 works, following the code execution path from the moment you run the program to the creation of 3D maps. We trace the journey of an image as it flows through the system: from being loaded at the command line, through feature extraction, pose estimation, map building, and loop closure. This narrative approach helps you understand not just \textit{what} each component does, but \textit{why} it exists and \textit{how} it connects to everything else.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+% Include chapter files
+\input{chapters/00_prologue}
+\input{chapters/01_entry_point}
+\input{chapters/02_system}
+\input{chapters/03_tracking}
+\input{chapters/04_frame}
+\input{chapters/05_local_mapping}
+\input{chapters/06_loop_closing}
+\input{chapters/07_epilogue}
+
+% Appendices
+\appendix
+\input{chapters/appendix_a_files}
+\input{chapters/appendix_b_reference}
+
+\end{document}
